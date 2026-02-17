@@ -1,0 +1,29 @@
+{
+  "name": "hex",
+  "version": "0.1.0",
+  "description": "Minimal AI agent with full hardware control",
+  "type": "module",
+  "bin": {
+    "hex": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.tsx",
+    "start": "node dist/cli.js"
+  },
+  "keywords": ["ai", "agent", "claude", "cli"],
+  "author": "Jack Gladowsky",
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^5.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.5",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
