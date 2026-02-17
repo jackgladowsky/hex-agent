@@ -117,6 +117,7 @@ async function callClaude(
   prompt: string, 
   sessionId: string, 
   isFirst: boolean,
+  model: string,
   onPartial?: (text: string) => void
 ): Promise<string> {
   return new Promise((resolve) => {
@@ -127,8 +128,8 @@ async function callClaude(
     const fullPath = [...extraPaths, process.env.PATH || ''].join(':');
 
     // Use stream-json for structured output (requires --verbose)
-    // Include system prompt on first message
-    const baseArgs = ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json'];
+    // Include system prompt and model on first message
+    const baseArgs = ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--model', model];
     const args = isFirst
       ? [...baseArgs, '--system-prompt', SYSTEM_PROMPT, '--session-id', sessionId]
       : [...baseArgs, '--resume', sessionId];
@@ -236,11 +237,12 @@ interface Message {
   content: string;
 }
 
-const Header: React.FC<{ systemInfo: SystemInfo; sessionId: string }> = ({ systemInfo, sessionId }) => (
+const Header: React.FC<{ systemInfo: SystemInfo; sessionId: string; model: string }> = ({ systemInfo, sessionId, model }) => (
   <Box flexDirection="column" marginBottom={1}>
     <Box>
       <Text color="green" bold>🦎 Hex</Text>
       <Text color="gray"> — {systemInfo.os} {systemInfo.arch}</Text>
+      <Text color="magenta"> [{model}]</Text>
     </Box>
     <Text color="gray" dimColor>
       {systemInfo.cpuCores} cores • {systemInfo.memoryGb} GB RAM • sudo: {systemInfo.sudo ? 'yes' : 'no'}
@@ -294,7 +296,11 @@ const InputArea: React.FC<{
 // Main App
 // ─────────────────────────────────────────────────────────────
 
-const App: React.FC = () => {
+interface AppProps {
+  model?: string;
+}
+
+const App: React.FC<AppProps> = ({ model = 'sonnet' }) => {
   const { exit } = useApp();
   const [systemInfo] = useState<SystemInfo>(detectSystem);
   const [sessionId] = useState<string>(generateSessionId);
@@ -327,7 +333,7 @@ const App: React.FC = () => {
       ? `[Runtime: ${systemInfo.os}/${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, cwd: ${process.cwd()}]\n\n${userMsg}`
       : userMsg;
 
-    const response = await callClaude(prompt, sessionId, isFirst);
+    const response = await callClaude(prompt, sessionId, isFirst, model);
     
     setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     setLoading(false);
@@ -336,7 +342,7 @@ const App: React.FC = () => {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header systemInfo={systemInfo} sessionId={sessionId} />
+      <Header systemInfo={systemInfo} sessionId={sessionId} model={model} />
       <MessageList messages={messages} />
       <InputArea
         value={input}
