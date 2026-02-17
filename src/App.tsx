@@ -6,6 +6,31 @@ import { execSync } from 'child_process';
 import * as os from 'os';
 import * as nodePty from 'node-pty';
 
+// Resolve full path to claude CLI
+function getClaudePath(): string {
+  try {
+    return execSync('which claude', { encoding: 'utf8' }).trim();
+  } catch {
+    // Fallback to common locations
+    const home = os.homedir();
+    const paths = [
+      '/usr/local/bin/claude',
+      '/opt/homebrew/bin/claude',
+      `${home}/.npm-global/bin/claude`,
+      `${home}/.nvm/versions/node/v22.21.0/bin/claude`,
+    ];
+    for (const p of paths) {
+      try {
+        execSync(`test -x "${p}"`);
+        return p;
+      } catch {}
+    }
+    return 'claude'; // fallback, let it fail with better error
+  }
+}
+
+const CLAUDE_PATH = getClaudePath();
+
 // ─────────────────────────────────────────────────────────────
 // System Detection
 // ─────────────────────────────────────────────────────────────
@@ -41,18 +66,24 @@ function detectSystem(): SystemInfo {
 // ─────────────────────────────────────────────────────────────
 
 async function callClaude(prompt: string, sessionId: string, isFirst: boolean): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const args = isFirst
       ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId, prompt]
       : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
 
-    const ptyProcess = nodePty.spawn('claude', args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
-      cwd: process.cwd(),
-      env: process.env as Record<string, string>,
-    });
+    let ptyProcess: ReturnType<typeof nodePty.spawn>;
+    try {
+      ptyProcess = nodePty.spawn(CLAUDE_PATH, args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 30,
+        cwd: process.cwd(),
+        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' } as Record<string, string>,
+      });
+    } catch (err) {
+      resolve(`Error: Could not spawn claude CLI. Make sure it's installed and in PATH.\nPath tried: ${CLAUDE_PATH}\n${err}`);
+      return;
+    }
 
     // For resume, send prompt via stdin
     if (!isFirst) {
