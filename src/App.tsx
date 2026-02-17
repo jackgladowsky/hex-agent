@@ -8,12 +8,17 @@ import * as nodePty from 'node-pty';
 
 // Resolve full path to claude CLI
 function getClaudePath(): string {
+  const home = os.homedir();
+  // Ensure PATH includes common locations
+  const extraPaths = `${home}/.local/bin:/opt/homebrew/bin:/usr/local/bin`;
+  const fullPath = `${extraPaths}:${process.env.PATH || ''}`;
+  
   try {
-    return execSync('which claude', { encoding: 'utf8' }).trim();
+    return execSync('which claude', { encoding: 'utf8', env: { ...process.env, PATH: fullPath } }).trim();
   } catch {
     // Fallback to common locations
-    const home = os.homedir();
     const paths = [
+      `${home}/.local/bin/claude`,
       '/usr/local/bin/claude',
       '/opt/homebrew/bin/claude',
       `${home}/.npm-global/bin/claude`,
