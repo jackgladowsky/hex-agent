@@ -69,7 +69,30 @@ function detectSystem(): SystemInfo {
 // Claude CLI Integration
 // ─────────────────────────────────────────────────────────────
 
-async function callClaude(prompt: string, sessionId: string, isFirst: boolean): Promise<string> {
+interface ClaudeStreamEvent {
+  type: string;
+  message?: {
+    role: string;
+    content: Array<{ type: string; text?: string }>;
+  };
+  content_block?: {
+    type: string;
+    text?: string;
+  };
+  delta?: {
+    type: string;
+    text?: string;
+  };
+  result?: string;
+  subtype?: string;
+}
+
+async function callClaude(
+  prompt: string, 
+  sessionId: string, 
+  isFirst: boolean,
+  onPartial?: (text: string) => void
+): Promise<string> {
   return new Promise((resolve) => {
     // Build the PATH with nvm and other common locations
     const home = os.homedir();
@@ -77,31 +100,61 @@ async function callClaude(prompt: string, sessionId: string, isFirst: boolean): 
     const extraPaths = [nvmPath, `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin'];
     const fullPath = [...extraPaths, process.env.PATH || ''].join(':');
 
-    // For session management, always use stdin for the prompt
-    // This avoids shell quoting issues with complex prompts
+    // Use stream-json for structured output (requires --verbose)
     const args = isFirst
-      ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId]
-      : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
+      ? ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--session-id', sessionId]
+      : ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--resume', sessionId];
 
     const child = spawn(CLAUDE_PATH, args, {
       cwd: process.cwd(),
       env: { ...process.env, PATH: fullPath, HOME: home },
-      shell: false, // Don't use shell to avoid quoting issues
+      shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    let output = '';
+    let fullText = '';
     let errorOutput = '';
+    let buffer = '';
 
     child.stdout.on('data', (data) => {
-      output += data.toString();
+      buffer += data.toString();
+      // Process complete JSON lines
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event: ClaudeStreamEvent = JSON.parse(line);
+          
+          // Handle different event types
+          if (event.type === 'assistant' && event.message?.content) {
+            // Full message at the end
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                fullText = block.text;
+              }
+            }
+          } else if (event.type === 'content_block_delta' && event.delta?.text) {
+            // Streaming delta
+            fullText += event.delta.text;
+            onPartial?.(fullText);
+          } else if (event.type === 'result' && event.result) {
+            // Final result text
+            fullText = event.result;
+          }
+        } catch {
+          // Not JSON, treat as raw text
+          fullText += line;
+        }
+      }
     });
 
     child.stderr.on('data', (data) => {
       errorOutput += data.toString();
     });
 
-    // Always send prompt via stdin (works for both first and resume)
+    // Send prompt via stdin
     child.stdin.write(prompt);
     child.stdin.end();
 
@@ -110,19 +163,29 @@ async function callClaude(prompt: string, sessionId: string, isFirst: boolean): 
     });
 
     child.on('close', (code) => {
-      if (code !== 0 && errorOutput) {
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        try {
+          const event: ClaudeStreamEvent = JSON.parse(buffer);
+          if (event.type === 'assistant' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                fullText = block.text;
+              }
+            }
+          } else if (event.result) {
+            fullText = event.result;
+          }
+        } catch {
+          fullText += buffer;
+        }
+      }
+
+      if (code !== 0 && errorOutput && !fullText) {
         resolve(`Error (code ${code}): ${errorOutput}`);
         return;
       }
-      // Clean ANSI codes
-      const clean = output
-        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
-        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-        .replace(/\x1b[PX^_].*?(?:\x1b\\|\x07)/gs, '')
-        .replace(/\[<u/g, '')
-        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
-        .trim();
-      resolve(clean || 'No response from Claude.');
+      resolve(fullText.trim() || 'No response from Claude.');
     });
   });
 }
