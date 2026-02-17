@@ -1,58 +1,58 @@
-# Hex
+# 🦎 Hex
 
-Minimal AI agent with full hardware control. Piggybacks your Claude Code subscription — no API keys needed.
+A terminal-based AI coding agent powered by Claude CLI.
+
+## Current Status
+
+✅ **Working:**
+- Interactive TUI with Ink (React for terminals)
+- Claude CLI integration via spawn (uses your authenticated Claude CLI)
+- Session persistence with session IDs
+- System info detection (OS, arch, CPU, RAM, sudo)
+- ANSI output cleaning
 
 ## Requirements
 
 - Node.js 18+
-- Claude Code CLI authenticated (`claude` command working)
+- Authenticated Claude CLI (`npm i -g @anthropic-ai/claude-code && claude`)
+- Must run `claude` and authenticate first
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/jackgladowsky/hex-agent
-cd hex-agent
 npm install
-npm start
-```
-
-## Usage
-
-```bash
-# Interactive chat (dev mode with hot reload)
 npm run dev
-
-# Production
-npm start
 ```
 
-## How it works
+Type messages, press Enter to send. Press Esc or Ctrl+C to exit.
 
-1. **Bootstrap** — Detects OS, arch, CPU, RAM, sudo access
-2. **Session** — Creates a Claude Code session (persists across messages)
-3. **Agent loop** — Your prompts go to Claude with `--dangerously-skip-permissions`
+## How It Works
+
+1. **UI Layer** - Ink renders a beautiful TUI with message history
+2. **Backend** - Spawns Claude CLI (`claude -p --session-id <id>`) for each conversation
+3. **Sessions** - UUID-based sessions for persistent conversations
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│  First message                          │
-│  claude -p --session-id <uuid> "prompt" │
-└─────────────────┬───────────────────────┘
-                  ▼
-┌─────────────────────────────────────────┐
-│  Subsequent messages                    │
-│  claude -p --resume <uuid>              │
-│  (prompt via stdin)                     │
-└─────────────────────────────────────────┘
+src/
+├── cli.tsx     # Entry point (Ink render)
+└── App.tsx     # Main component (UI + Claude integration)
 ```
 
-## Philosophy
+## Design Goals
 
-- **Zero config** — Just clone and run
-- **Hardware agnostic** — Works on Linux/Mac/Windows
-- **Self-discovering** — Detects its own capabilities at startup
-- **Piggybacks auth** — Uses your Claude Code subscription, no API key management
-- **Full autonomy** — `--dangerously-skip-permissions` means no confirmation prompts
+- **Minimal** - Single-file core, no unnecessary abstractions
+- **Fast** - Direct CLI spawn, no SDK overhead
+- **Persistent** - Session IDs enable conversation continuity
+- **Beautiful** - Clean TUI with color-coded messages
 
-## License
+## Notes
 
-MIT
+- Uses `-p` (print) mode for non-interactive output
+- Requires Claude CLI to be authenticated (OAuth or API key)
+- PATH must include the claude binary location
+
+---
+
+Built by Jack. Powered by Claude.
