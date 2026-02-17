@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import * as os from 'os';
-import * as nodePty from 'node-pty';
 
 // Resolve full path to claude CLI
 function getClaudePath(): string {
@@ -71,37 +70,45 @@ function detectSystem(): SystemInfo {
 // ─────────────────────────────────────────────────────────────
 
 async function callClaude(prompt: string, sessionId: string, isFirst: boolean): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const args = isFirst
       ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId, prompt]
       : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
 
-    let ptyProcess: ReturnType<typeof nodePty.spawn>;
-    try {
-      ptyProcess = nodePty.spawn(CLAUDE_PATH, args, {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 30,
-        cwd: process.cwd(),
-        env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' } as Record<string, string>,
-      });
-    } catch (err) {
-      resolve(`Error: Could not spawn claude CLI. Make sure it's installed and in PATH.\nPath tried: ${CLAUDE_PATH}\n${err}`);
-      return;
-    }
+    const child = spawn(CLAUDE_PATH, args, {
+      cwd: process.cwd(),
+      env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let output = '';
+    let errorOutput = '';
+
+    child.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
 
     // For resume, send prompt via stdin
     if (!isFirst) {
-      setTimeout(() => ptyProcess.write(prompt + '\n'), 100);
+      child.stdin.write(prompt + '\n');
+      child.stdin.end();
     }
 
-    let output = '';
-    ptyProcess.onData((data: string) => {
-      output += data;
+    child.on('error', (err) => {
+      resolve(`Error: Could not spawn claude CLI.\nPath: ${CLAUDE_PATH}\n${err.message}`);
     });
 
-    ptyProcess.onExit(() => {
-      // Clean ANSI codes and terminal garbage
+    child.on('close', (code) => {
+      if (code !== 0 && errorOutput) {
+        resolve(`Error (code ${code}): ${errorOutput}`);
+        return;
+      }
+      // Clean ANSI codes
       const clean = output
         .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
         .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
