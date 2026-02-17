@@ -4,38 +4,26 @@ Minimal AI agent with full hardware control. Piggybacks your Claude Code subscri
 
 ## Requirements
 
-- Python 3.10+ (for Python version)
-- Node.js 18+ (for TypeScript version)
+- Node.js 18+
 - Claude Code CLI authenticated (`claude` command working)
 
 ## Quick Start
 
-### Python (zero deps)
-```bash
-git clone https://github.com/jackgladowsky/hex-agent
-cd hex-agent
-python3 hex.py
-```
-
-### TypeScript (pretty terminal UI)
 ```bash
 git clone https://github.com/jackgladowsky/hex-agent
 cd hex-agent
 npm install
-npm run dev
+npm start
 ```
 
 ## Usage
 
 ```bash
-# Interactive chat
-python3 hex.py
+# Interactive chat (dev mode with hot reload)
+npm run dev
 
-# Single prompt
-python3 hex.py run "list files in /tmp"
-
-# Show system info
-python3 hex.py info
+# Production
+npm start
 ```
 
 ## How it works
@@ -60,7 +48,7 @@ python3 hex.py info
 ## Philosophy
 
 - **Zero config** — Just clone and run
-- **Hardware agnostic** — Works on Linux/Mac/Windows with Python
+- **Hardware agnostic** — Works on Linux/Mac/Windows
 - **Self-discovering** — Detects its own capabilities at startup
 - **Piggybacks auth** — Uses your Claude Code subscription, no API key management
 - **Full autonomy** — `--dangerously-skip-permissions` means no confirmation prompts
