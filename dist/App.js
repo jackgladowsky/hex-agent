@@ -59,7 +59,12 @@ async function callClaude(prompt, sessionId, isFirst) {
     });
 }
 function generateSessionId() {
-    return `hex-${Math.random().toString(36).substring(2, 10)}`;
+    // Generate UUID v4
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
 }
 const Header = ({ systemInfo, sessionId }) => (_jsxs(Box, { flexDirection: "column", marginBottom: 1, children: [_jsxs(Box, { children: [_jsx(Text, { color: "green", bold: true, children: "\uD83E\uDD8E Hex" }), _jsxs(Text, { color: "gray", children: [" \u2014 ", systemInfo.os, " ", systemInfo.arch] })] }), _jsxs(Text, { color: "gray", dimColor: true, children: [systemInfo.cpuCores, " cores \u2022 ", systemInfo.memoryGb, " GB RAM \u2022 sudo: ", systemInfo.sudo ? 'yes' : 'no'] }), _jsxs(Text, { color: "gray", dimColor: true, children: ["session: ", sessionId] })] }));
 const MessageList = ({ messages }) => (_jsx(Box, { flexDirection: "column", marginBottom: 1, children: messages.slice(-10).map((msg, i) => (_jsxs(Box, { marginBottom: msg.role === 'assistant' ? 1 : 0, children: [_jsxs(Text, { color: msg.role === 'user' ? 'blue' : 'green', bold: true, children: [msg.role === 'user' ? 'you' : 'hex', ":"] }), _jsxs(Text, { children: [" ", msg.content] })] }, i))) }));

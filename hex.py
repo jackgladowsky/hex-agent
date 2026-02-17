@@ -136,7 +136,7 @@ def call_claude(prompt: str, system_info: dict, session_id: str = None, is_first
 
 def chat(system_info: dict):
     """Interactive chat loop."""
-    session_id = f"hex-{uuid.uuid4().hex[:8]}"
+    session_id = str(uuid.uuid4())
     
     print(f"\n🦎 Hex v0.1 — {system_info['os']} {system_info['arch']}")
     print(f"   {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')} GB RAM, sudo: {'yes' if system_info.get('sudo') else 'no'}")
