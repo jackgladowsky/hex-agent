@@ -25,15 +25,22 @@ function detectSystem() {
 // ─────────────────────────────────────────────────────────────
 // Claude CLI Integration
 // ─────────────────────────────────────────────────────────────
-async function callClaude(prompt) {
+async function callClaude(prompt, sessionId, isFirst) {
     return new Promise((resolve) => {
-        const ptyProcess = nodePty.spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
+        const args = isFirst
+            ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId, prompt]
+            : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
+        const ptyProcess = nodePty.spawn('claude', args, {
             name: 'xterm-256color',
             cols: 120,
             rows: 30,
             cwd: process.cwd(),
             env: process.env,
         });
+        // For resume, send prompt via stdin
+        if (!isFirst) {
+            setTimeout(() => ptyProcess.write(prompt + '\n'), 100);
+        }
         let output = '';
         ptyProcess.onData((data) => {
             output += data;
@@ -51,7 +58,10 @@ async function callClaude(prompt) {
         });
     });
 }
-const Header = ({ systemInfo }) => (_jsxs(Box, { flexDirection: "column", marginBottom: 1, children: [_jsxs(Box, { children: [_jsx(Text, { color: "green", bold: true, children: "\uD83E\uDD8E Hex" }), _jsxs(Text, { color: "gray", children: [" \u2014 ", systemInfo.os, " ", systemInfo.arch] })] }), _jsxs(Text, { color: "gray", dimColor: true, children: [systemInfo.cpuCores, " cores \u2022 ", systemInfo.memoryGb, " GB RAM \u2022 sudo: ", systemInfo.sudo ? 'yes' : 'no'] })] }));
+function generateSessionId() {
+    return `hex-${Math.random().toString(36).substring(2, 10)}`;
+}
+const Header = ({ systemInfo, sessionId }) => (_jsxs(Box, { flexDirection: "column", marginBottom: 1, children: [_jsxs(Box, { children: [_jsx(Text, { color: "green", bold: true, children: "\uD83E\uDD8E Hex" }), _jsxs(Text, { color: "gray", children: [" \u2014 ", systemInfo.os, " ", systemInfo.arch] })] }), _jsxs(Text, { color: "gray", dimColor: true, children: [systemInfo.cpuCores, " cores \u2022 ", systemInfo.memoryGb, " GB RAM \u2022 sudo: ", systemInfo.sudo ? 'yes' : 'no'] }), _jsxs(Text, { color: "gray", dimColor: true, children: ["session: ", sessionId] })] }));
 const MessageList = ({ messages }) => (_jsx(Box, { flexDirection: "column", marginBottom: 1, children: messages.slice(-10).map((msg, i) => (_jsxs(Box, { marginBottom: msg.role === 'assistant' ? 1 : 0, children: [_jsxs(Text, { color: msg.role === 'user' ? 'blue' : 'green', bold: true, children: [msg.role === 'user' ? 'you' : 'hex', ":"] }), _jsxs(Text, { children: [" ", msg.content] })] }, i))) }));
 const InputArea = ({ value, onChange, onSubmit, loading }) => (_jsx(Box, { children: loading ? (_jsxs(Box, { children: [_jsx(Text, { color: "yellow", children: _jsx(Spinner, { type: "dots" }) }), _jsx(Text, { color: "gray", children: " thinking..." })] })) : (_jsxs(Box, { children: [_jsx(Text, { color: "cyan", bold: true, children: '> ' }), _jsx(TextInput, { value: value, onChange: onChange, onSubmit: onSubmit, placeholder: "Type a message..." })] })) }));
 // ─────────────────────────────────────────────────────────────
@@ -60,9 +70,11 @@ const InputArea = ({ value, onChange, onSubmit, loading }) => (_jsx(Box, { child
 const App = () => {
     const { exit } = useApp();
     const [systemInfo] = useState(detectSystem);
+    const [sessionId] = useState(generateSessionId);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [isFirst, setIsFirst] = useState(true);
     useInput((_, key) => {
         if (key.escape || (key.ctrl && _.toLowerCase() === 'c')) {
             exit();
@@ -79,14 +91,15 @@ const App = () => {
         setInput('');
         setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
         setLoading(true);
-        // Build context
-        const context = `[System: ${systemInfo.os} ${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, sudo=${systemInfo.sudo ? 'yes' : 'no'}]\n\n`;
-        const history = messages.slice(-4).map(m => `${m.role === 'user' ? 'User' : 'Hex'}: ${m.content}`).join('\n');
-        const prompt = context + (history ? history + '\n' : '') + `User: ${userMsg}`;
-        const response = await callClaude(prompt);
+        // First message includes system context
+        const prompt = isFirst
+            ? `[System: ${systemInfo.os} ${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, sudo=${systemInfo.sudo ? 'yes' : 'no'}]\n\n${userMsg}`
+            : userMsg;
+        const response = await callClaude(prompt, sessionId, isFirst);
         setMessages(prev => [...prev, { role: 'assistant', content: response }]);
         setLoading(false);
+        setIsFirst(false);
     };
-    return (_jsxs(Box, { flexDirection: "column", padding: 1, children: [_jsx(Header, { systemInfo: systemInfo }), _jsx(MessageList, { messages: messages }), _jsx(InputArea, { value: input, onChange: setInput, onSubmit: handleSubmit, loading: loading }), _jsx(Box, { marginTop: 1, children: _jsx(Text, { color: "gray", dimColor: true, children: "Press Esc or Ctrl+C to exit" }) })] }));
+    return (_jsxs(Box, { flexDirection: "column", padding: 1, children: [_jsx(Header, { systemInfo: systemInfo, sessionId: sessionId }), _jsx(MessageList, { messages: messages }), _jsx(InputArea, { value: input, onChange: setInput, onSubmit: handleSubmit, loading: loading }), _jsx(Box, { marginTop: 1, children: _jsx(Text, { color: "gray", dimColor: true, children: "Press Esc or Ctrl+C to exit" }) })] }));
 };
 export default App;

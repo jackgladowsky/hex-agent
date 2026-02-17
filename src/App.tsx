@@ -40,15 +40,24 @@ function detectSystem(): SystemInfo {
 // Claude CLI Integration
 // ─────────────────────────────────────────────────────────────
 
-async function callClaude(prompt: string): Promise<string> {
+async function callClaude(prompt: string, sessionId: string, isFirst: boolean): Promise<string> {
   return new Promise((resolve) => {
-    const ptyProcess = nodePty.spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
+    const args = isFirst
+      ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId, prompt]
+      : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
+
+    const ptyProcess = nodePty.spawn('claude', args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd: process.cwd(),
       env: process.env as Record<string, string>,
     });
+
+    // For resume, send prompt via stdin
+    if (!isFirst) {
+      setTimeout(() => ptyProcess.write(prompt + '\n'), 100);
+    }
 
     let output = '';
     ptyProcess.onData((data: string) => {
@@ -69,6 +78,10 @@ async function callClaude(prompt: string): Promise<string> {
   });
 }
 
+function generateSessionId(): string {
+  return `hex-${Math.random().toString(36).substring(2, 10)}`;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Components
 // ─────────────────────────────────────────────────────────────
@@ -78,7 +91,7 @@ interface Message {
   content: string;
 }
 
-const Header: React.FC<{ systemInfo: SystemInfo }> = ({ systemInfo }) => (
+const Header: React.FC<{ systemInfo: SystemInfo; sessionId: string }> = ({ systemInfo, sessionId }) => (
   <Box flexDirection="column" marginBottom={1}>
     <Box>
       <Text color="green" bold>🦎 Hex</Text>
@@ -87,6 +100,7 @@ const Header: React.FC<{ systemInfo: SystemInfo }> = ({ systemInfo }) => (
     <Text color="gray" dimColor>
       {systemInfo.cpuCores} cores • {systemInfo.memoryGb} GB RAM • sudo: {systemInfo.sudo ? 'yes' : 'no'}
     </Text>
+    <Text color="gray" dimColor>session: {sessionId}</Text>
   </Box>
 );
 
@@ -138,9 +152,11 @@ const InputArea: React.FC<{
 const App: React.FC = () => {
   const { exit } = useApp();
   const [systemInfo] = useState<SystemInfo>(detectSystem);
+  const [sessionId] = useState<string>(generateSessionId);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isFirst, setIsFirst] = useState(true);
 
   useInput((_, key) => {
     if (key.escape || (key.ctrl && _.toLowerCase() === 'c')) {
@@ -161,20 +177,21 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setLoading(true);
 
-    // Build context
-    const context = `[System: ${systemInfo.os} ${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, sudo=${systemInfo.sudo ? 'yes' : 'no'}]\n\n`;
-    const history = messages.slice(-4).map(m => `${m.role === 'user' ? 'User' : 'Hex'}: ${m.content}`).join('\n');
-    const prompt = context + (history ? history + '\n' : '') + `User: ${userMsg}`;
+    // First message includes system context
+    const prompt = isFirst
+      ? `[System: ${systemInfo.os} ${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, sudo=${systemInfo.sudo ? 'yes' : 'no'}]\n\n${userMsg}`
+      : userMsg;
 
-    const response = await callClaude(prompt);
+    const response = await callClaude(prompt, sessionId, isFirst);
     
     setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     setLoading(false);
+    setIsFirst(false);
   };
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header systemInfo={systemInfo} />
+      <Header systemInfo={systemInfo} sessionId={sessionId} />
       <MessageList messages={messages} />
       <InputArea
         value={input}

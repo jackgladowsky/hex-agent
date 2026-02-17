@@ -11,6 +11,8 @@ import platform
 import pty
 import os
 import select
+import uuid
+import re
 
 # ─────────────────────────────────────────────────────────────
 # System: Detect hardware and OS
@@ -64,9 +66,14 @@ You have full shell access. Execute commands freely to accomplish tasks.
 Be direct and concise. This is your machine."""
 
 
-def call_claude_pty(prompt: str) -> str:
+def call_claude_pty(prompt: str, session_id: str = None, is_resume: bool = False) -> str:
     """Call Claude via CLI with PTY (required for Claude CLI)."""
-    cmd = ["claude", "-p", "--dangerously-skip-permissions", prompt]
+    if is_resume and session_id:
+        cmd = ["claude", "-p", "--dangerously-skip-permissions", "--resume", session_id]
+    elif session_id:
+        cmd = ["claude", "-p", "--dangerously-skip-permissions", "--session-id", session_id, prompt]
+    else:
+        cmd = ["claude", "-p", "--dangerously-skip-permissions", prompt]
     
     # Create pseudo-terminal
     master_fd, slave_fd = pty.openpty()
@@ -80,6 +87,10 @@ def call_claude_pty(prompt: str) -> str:
             close_fds=True,
         )
         os.close(slave_fd)
+        
+        # For resume, we need to send the prompt via stdin
+        if is_resume and session_id:
+            os.write(master_fd, (prompt + "\n").encode())
         
         output = []
         while True:
@@ -99,7 +110,6 @@ def call_claude_pty(prompt: str) -> str:
         
         # Clean up terminal control codes
         result = ''.join(output)
-        import re
         # Remove ANSI escape sequences
         result = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', result)
         result = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', result)
@@ -113,19 +123,27 @@ def call_claude_pty(prompt: str) -> str:
         return f"Error: {e}"
 
 
-def call_claude(prompt: str, system_info: dict) -> str:
+def call_claude(prompt: str, system_info: dict, session_id: str = None, is_first: bool = True) -> str:
     """Call Claude with system context."""
-    context = f"[System: {system_info['os']} {system_info['arch']}, {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')}GB RAM, sudo={'yes' if system_info.get('sudo') else 'no'}]\n\n"
-    return call_claude_pty(context + prompt)
+    if is_first:
+        # First message includes system context
+        context = f"[System: {system_info['os']} {system_info['arch']}, {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')}GB RAM, sudo={'yes' if system_info.get('sudo') else 'no'}]\n\n"
+        return call_claude_pty(context + prompt, session_id=session_id, is_resume=False)
+    else:
+        # Subsequent messages use --resume
+        return call_claude_pty(prompt, session_id=session_id, is_resume=True)
 
 
 def chat(system_info: dict):
     """Interactive chat loop."""
+    session_id = f"hex-{uuid.uuid4().hex[:8]}"
+    
     print(f"\n🦎 Hex v0.1 — {system_info['os']} {system_info['arch']}")
     print(f"   {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')} GB RAM, sudo: {'yes' if system_info.get('sudo') else 'no'}")
+    print(f"   session: {session_id}")
     print("\nType 'exit' to quit.\n")
     
-    history = []
+    is_first = True
     
     while True:
         try:
@@ -139,18 +157,11 @@ def chat(system_info: dict):
         if user_input.lower() in ("exit", "quit", "q"):
             break
         
-        # Build prompt with history
-        prompt = ""
-        for h in history[-4:]:
-            prompt += f"{h['role']}: {h['msg']}\n"
-        prompt += f"User: {user_input}"
-        
         print("  [thinking...]")
-        response = call_claude(prompt, system_info)
+        response = call_claude(user_input, system_info, session_id=session_id, is_first=is_first)
         print(f"\nhex: {response}\n")
         
-        history.append({"role": "User", "msg": user_input})
-        history.append({"role": "Hex", "msg": response[:300]})
+        is_first = False
 
 
 # ─────────────────────────────────────────────────────────────
