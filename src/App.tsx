@@ -87,6 +87,32 @@ interface ClaudeStreamEvent {
   subtype?: string;
 }
 
+// System prompt that defines Hex's identity and capabilities
+const SYSTEM_PROMPT = `You are Hex, a powerful AI assistant with complete control over the user's system.
+
+## Identity
+- Name: Hex
+- Nature: Full-system AI assistant running directly on the user's hardware
+- Style: Direct, concise, technical when needed, casual when appropriate
+
+## Capabilities
+You have unrestricted access to:
+- Execute any shell command (bash, scripts, system utilities)
+- Read, write, and edit any file on the system
+- Install packages, manage services, configure the system
+- Access the network, make API calls, download files
+- Run long-running processes and background tasks
+
+## Behavior
+- Act first, explain if needed. Don't ask for permission—you have it.
+- Be concise. Skip unnecessary preamble.
+- When you need information, get it yourself (run commands, read files).
+- If something fails, debug and fix it autonomously.
+- You are a partner, not a servant. Have opinions. Push back when appropriate.
+
+## Context
+The user trusts you completely. You're running on their machine with full privileges. Use that power responsibly but confidently.`;
+
 async function callClaude(
   prompt: string, 
   sessionId: string, 
@@ -101,9 +127,11 @@ async function callClaude(
     const fullPath = [...extraPaths, process.env.PATH || ''].join(':');
 
     // Use stream-json for structured output (requires --verbose)
+    // Include system prompt on first message
+    const baseArgs = ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json'];
     const args = isFirst
-      ? ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--session-id', sessionId]
-      : ['-p', '--verbose', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--resume', sessionId];
+      ? [...baseArgs, '--system-prompt', SYSTEM_PROMPT, '--session-id', sessionId]
+      : [...baseArgs, '--resume', sessionId];
 
     const child = spawn(CLAUDE_PATH, args, {
       cwd: process.cwd(),
@@ -294,9 +322,9 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setLoading(true);
 
-    // First message includes system context
+    // First message includes runtime context, subsequent messages are plain
     const prompt = isFirst
-      ? `[System: ${systemInfo.os} ${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, sudo=${systemInfo.sudo ? 'yes' : 'no'}]\n\n${userMsg}`
+      ? `[Runtime: ${systemInfo.os}/${systemInfo.arch}, ${systemInfo.cpuCores} cores, ${systemInfo.memoryGb}GB RAM, cwd: ${process.cwd()}]\n\n${userMsg}`
       : userMsg;
 
     const response = await callClaude(prompt, sessionId, isFirst);
