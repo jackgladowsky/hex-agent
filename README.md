@@ -1,28 +1,22 @@
 # Hex
 
-Minimal AI agent with full hardware control. Uses Claude Code's OAuth token — no API keys needed.
+Minimal AI agent with full hardware control. Zero dependencies — just Python 3 and Claude Code CLI.
 
 ## Requirements
 
 - Python 3.10+
-- Claude Code authenticated (`claude` CLI logged in)
-
-## Install
-
-```bash
-cd ~/hex
-pip install -r requirements.txt
-# or
-uv pip install -r requirements.txt
-```
+- Claude Code CLI authenticated (`npm install -g @anthropic-ai/claude-code` then `claude` to login)
 
 ## Usage
 
 ```bash
-# Chat with Hex
+# Interactive chat
 python hex.py chat
 # or just
 python hex.py
+
+# Single prompt
+python hex.py run "list files in /tmp"
 
 # Show system info
 python hex.py info
@@ -30,19 +24,30 @@ python hex.py info
 
 ## How it works
 
-1. **Bootstrap**: Detects OS, CPU, RAM, sudo access
-2. **Auth**: Reads Claude Code's OAuth token from `~/.claude/.credentials.json`
-3. **Loop**: User input → Claude → tool execution → repeat
-
-## Tools
-
-- `run_command` - Execute shell commands (with optional sudo)
-- `read_file` - Read file contents
-- `write_file` - Write to files
+```
+┌─────────────────────────────────────────┐
+│  BOOTSTRAP                              │
+│  - Detect OS, arch, permissions         │
+│  - Inventory hardware (CPU, RAM)        │
+│  - Check sudo access                    │
+└─────────────────┬───────────────────────┘
+                  ▼
+┌─────────────────────────────────────────┐
+│  AGENT LOOP                             │
+│  - User prompt → Claude CLI (-p mode)   │
+│  - Uses PTY for TTY-required CLI        │
+│  - Full autonomy (--dangerously-skip)   │
+└─────────────────────────────────────────┘
+```
 
 ## Philosophy
 
-- Hardware agnostic (Linux/Mac/Windows)
-- Self-discovering (figures out its own capabilities)
-- Minimal dependencies (just httpx)
-- Piggybacks Claude Code auth (no API key management)
+- **Hardware agnostic** — works on any Linux/Mac/Windows with Python
+- **Self-discovering** — detects its own hardware and capabilities
+- **Zero dependencies** — just stdlib + Claude Code CLI
+- **Piggybacks Claude Code auth** — no API key management
+- **Full autonomy** — `--dangerously-skip-permissions` means no prompts
+
+## License
+
+MIT
