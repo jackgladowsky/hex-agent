@@ -71,14 +71,22 @@ function detectSystem(): SystemInfo {
 
 async function callClaude(prompt: string, sessionId: string, isFirst: boolean): Promise<string> {
   return new Promise((resolve) => {
+    // Build the PATH with nvm and other common locations
+    const home = os.homedir();
+    const nvmPath = `${home}/.nvm/versions/node/v22.21.0/bin`;
+    const extraPaths = [nvmPath, `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin'];
+    const fullPath = [...extraPaths, process.env.PATH || ''].join(':');
+
+    // For session management, always use stdin for the prompt
+    // This avoids shell quoting issues with complex prompts
     const args = isFirst
-      ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId, prompt]
+      ? ['-p', '--dangerously-skip-permissions', '--session-id', sessionId]
       : ['-p', '--dangerously-skip-permissions', '--resume', sessionId];
 
     const child = spawn(CLAUDE_PATH, args, {
       cwd: process.cwd(),
-      env: { ...process.env, PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' },
-      shell: true,
+      env: { ...process.env, PATH: fullPath, HOME: home },
+      shell: false, // Don't use shell to avoid quoting issues
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -93,11 +101,9 @@ async function callClaude(prompt: string, sessionId: string, isFirst: boolean): 
       errorOutput += data.toString();
     });
 
-    // For resume, send prompt via stdin
-    if (!isFirst) {
-      child.stdin.write(prompt + '\n');
-      child.stdin.end();
-    }
+    // Always send prompt via stdin (works for both first and resume)
+    child.stdin.write(prompt);
+    child.stdin.end();
 
     child.on('error', (err) => {
       resolve(`Error: Could not spawn claude CLI.\nPath: ${CLAUDE_PATH}\n${err.message}`);
@@ -116,7 +122,7 @@ async function callClaude(prompt: string, sessionId: string, isFirst: boolean): 
         .replace(/\[<u/g, '')
         .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
         .trim();
-      resolve(clean);
+      resolve(clean || 'No response from Claude.');
     });
   });
 }
