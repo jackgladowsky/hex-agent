@@ -1,39 +1,16 @@
 #!/usr/bin/env python3
 """
 Hex - Minimal AI agent with full hardware control.
-Uses Claude Code OAuth token for authentication.
+Uses Claude Code CLI for LLM calls (piggybacks your subscription).
 """
 
 import json
-import os
 import subprocess
 import sys
-from pathlib import Path
-
-import httpx
-
-# ─────────────────────────────────────────────────────────────
-# Auth: Read Claude Code credentials
-# ─────────────────────────────────────────────────────────────
-
-def get_claude_credentials() -> dict:
-    """Load OAuth token from Claude Code's credentials file."""
-    creds_path = Path.home() / ".claude" / ".credentials.json"
-    if not creds_path.exists():
-        print("Error: Claude Code not authenticated.")
-        print("Run 'claude' and log in first.")
-        sys.exit(1)
-    
-    with open(creds_path) as f:
-        creds = json.load(f)
-    
-    oauth = creds.get("claudeAiOauth", {})
-    if not oauth.get("accessToken"):
-        print("Error: No access token found. Re-authenticate with Claude Code.")
-        sys.exit(1)
-    
-    return oauth
-
+import platform
+import pty
+import os
+import select
 
 # ─────────────────────────────────────────────────────────────
 # System: Detect hardware and OS
@@ -41,8 +18,6 @@ def get_claude_credentials() -> dict:
 
 def detect_system() -> dict:
     """Gather system information."""
-    import platform
-    
     info = {
         "os": platform.system(),
         "arch": platform.machine(),
@@ -52,164 +27,105 @@ def detect_system() -> dict:
     
     # Check sudo access
     try:
-        result = subprocess.run(
-            ["sudo", "-n", "true"],
-            capture_output=True,
-            timeout=2
-        )
+        result = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=2)
         info["sudo"] = result.returncode == 0
     except:
         info["sudo"] = False
     
-    # Get memory
-    try:
-        if info["os"] == "Linux":
+    # Linux-specific
+    if info["os"] == "Linux":
+        try:
             with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
-                        kb = int(line.split()[1])
-                        info["memory_gb"] = round(kb / 1024 / 1024, 1)
+                        info["memory_gb"] = round(int(line.split()[1]) / 1024 / 1024, 1)
                         break
-    except:
-        pass
-    
-    # Get CPU info
-    try:
-        if info["os"] == "Linux":
-            result = subprocess.run(["nproc"], capture_output=True, text=True)
-            info["cpu_cores"] = int(result.stdout.strip())
-    except:
-        pass
+            info["cpu_cores"] = int(subprocess.run(["nproc"], capture_output=True, text=True).stdout.strip())
+        except:
+            pass
     
     return info
 
 
-# ─────────────────────────────────────────────────────────────
-# Tools: Command execution
-# ─────────────────────────────────────────────────────────────
-
-TOOLS = [
-    {
-        "name": "run_command",
-        "description": "Execute a shell command on the system. Use for file operations, system management, installing packages, etc.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
-                "sudo": {
-                    "type": "boolean",
-                    "description": "Run with sudo (if available)",
-                    "default": False
-                }
-            },
-            "required": ["command"]
-        }
-    },
-    {
-        "name": "read_file",
-        "description": "Read contents of a file",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file"
-                }
-            },
-            "required": ["path"]
-        }
-    },
-    {
-        "name": "write_file",
-        "description": "Write content to a file",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write"
-                }
-            },
-            "required": ["path", "content"]
-        }
-    }
-]
-
-
-def execute_tool(name: str, input: dict) -> str:
-    """Execute a tool and return the result."""
+def check_claude_cli() -> bool:
+    """Check if Claude CLI is installed."""
     try:
-        if name == "run_command":
-            cmd = input["command"]
-            if input.get("sudo"):
-                cmd = f"sudo {cmd}"
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR: {result.stderr}"
-            if result.returncode != 0:
-                output += f"\n[exit code: {result.returncode}]"
-            return output or "(no output)"
+        return subprocess.run(["claude", "--version"], capture_output=True, timeout=5).returncode == 0
+    except:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────
+# Agent
+# ─────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """You are Hex, an AI agent with full control of this machine.
+You have full shell access. Execute commands freely to accomplish tasks.
+Be direct and concise. This is your machine."""
+
+
+def call_claude_pty(prompt: str) -> str:
+    """Call Claude via CLI with PTY (required for Claude CLI)."""
+    cmd = ["claude", "-p", "--dangerously-skip-permissions", prompt]
+    
+    # Create pseudo-terminal
+    master_fd, slave_fd = pty.openpty()
+    
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+        )
+        os.close(slave_fd)
         
-        elif name == "read_file":
-            path = Path(input["path"]).expanduser()
-            return path.read_text()
+        output = []
+        while True:
+            ready, _, _ = select.select([master_fd], [], [], 120)
+            if not ready:
+                break
+            try:
+                chunk = os.read(master_fd, 4096)
+                if not chunk:
+                    break
+                output.append(chunk.decode('utf-8', errors='replace'))
+            except OSError:
+                break
         
-        elif name == "write_file":
-            path = Path(input["path"]).expanduser()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(input["content"])
-            return f"Wrote {len(input['content'])} bytes to {path}"
+        proc.wait()
+        os.close(master_fd)
         
-        else:
-            return f"Unknown tool: {name}"
+        # Clean up terminal control codes
+        result = ''.join(output)
+        import re
+        # Remove ANSI escape sequences
+        result = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', result)
+        result = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', result)
+        result = re.sub(r'\x1b[PX^_].*?(?:\x1b\\|\x07)', '', result, flags=re.DOTALL)
+        result = re.sub(r'\[<u', '', result)  # Specific garbage
+        result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', result)
+        
+        return result.strip()
     
     except Exception as e:
         return f"Error: {e}"
 
 
-# ─────────────────────────────────────────────────────────────
-# Agent: Main loop
-# ─────────────────────────────────────────────────────────────
-
-def build_system_prompt(system_info: dict) -> str:
-    """Build the system prompt with hardware context."""
-    return f"""You are Hex, an AI agent with full control of this machine.
-
-SYSTEM INFO:
-- OS: {system_info.get('os', 'Unknown')}
-- Architecture: {system_info.get('arch', 'Unknown')}
-- Hostname: {system_info.get('hostname', 'Unknown')}
-- CPU Cores: {system_info.get('cpu_cores', 'Unknown')}
-- Memory: {system_info.get('memory_gb', 'Unknown')} GB
-- Sudo Access: {system_info.get('sudo', False)}
-
-You have tools to run commands, read/write files. Use them freely to accomplish tasks.
-Be direct, efficient, and take action. This is your machine."""
+def call_claude(prompt: str, system_info: dict) -> str:
+    """Call Claude with system context."""
+    context = f"[System: {system_info['os']} {system_info['arch']}, {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')}GB RAM, sudo={'yes' if system_info.get('sudo') else 'no'}]\n\n"
+    return call_claude_pty(context + prompt)
 
 
-def chat(oauth: dict, system_info: dict):
-    """Main chat loop."""
-    messages = []
-    system_prompt = build_system_prompt(system_info)
-    
+def chat(system_info: dict):
+    """Interactive chat loop."""
     print(f"\n🦎 Hex v0.1 — {system_info['os']} {system_info['arch']}")
-    print(f"   {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')} GB RAM")
-    print(f"   sudo: {'yes' if system_info.get('sudo') else 'no'}")
+    print(f"   {system_info.get('cpu_cores', '?')} cores, {system_info.get('memory_gb', '?')} GB RAM, sudo: {'yes' if system_info.get('sudo') else 'no'}")
     print("\nType 'exit' to quit.\n")
+    
+    history = []
     
     while True:
         try:
@@ -221,89 +137,31 @@ def chat(oauth: dict, system_info: dict):
         if not user_input:
             continue
         if user_input.lower() in ("exit", "quit", "q"):
-            print("Bye.")
             break
         
-        messages.append({"role": "user", "content": user_input})
+        # Build prompt with history
+        prompt = ""
+        for h in history[-4:]:
+            prompt += f"{h['role']}: {h['msg']}\n"
+        prompt += f"User: {user_input}"
         
-        # Agent loop: keep going until no more tool calls
-        while True:
-            response = call_claude(oauth, system_prompt, messages)
-            
-            # Collect text and tool calls
-            text_parts = []
-            tool_calls = []
-            
-            for block in response.get("content", []):
-                if block["type"] == "text":
-                    text_parts.append(block["text"])
-                elif block["type"] == "tool_use":
-                    tool_calls.append(block)
-            
-            # Print any text
-            if text_parts:
-                print(f"\nhex: {''.join(text_parts)}\n")
-            
-            # If no tool calls, we're done
-            if not tool_calls:
-                messages.append({"role": "assistant", "content": response["content"]})
-                break
-            
-            # Execute tools
-            messages.append({"role": "assistant", "content": response["content"]})
-            tool_results = []
-            
-            for tool in tool_calls:
-                print(f"  [running: {tool['name']}]")
-                result = execute_tool(tool["name"], tool["input"])
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool["id"],
-                    "content": result[:10000]  # Truncate long outputs
-                })
-            
-            messages.append({"role": "user", "content": tool_results})
-
-
-def call_claude(oauth: dict, system_prompt: str, messages: list) -> dict:
-    """Call Claude API with OAuth token."""
-    headers = {
-        "Authorization": f"Bearer {oauth['accessToken']}",
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-    }
-    
-    payload = {
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 4096,
-        "system": system_prompt,
-        "messages": messages,
-        "tools": TOOLS,
-    }
-    
-    with httpx.Client(timeout=120) as client:
-        resp = client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers=headers,
-            json=payload
-        )
-    
-    if resp.status_code != 200:
-        print(f"API Error: {resp.status_code}")
-        print(resp.text)
-        sys.exit(1)
-    
-    return resp.json()
+        print("  [thinking...]")
+        response = call_claude(prompt, system_info)
+        print(f"\nhex: {response}\n")
+        
+        history.append({"role": "User", "msg": user_input})
+        history.append({"role": "Hex", "msg": response[:300]})
 
 
 # ─────────────────────────────────────────────────────────────
-# CLI Entry
+# CLI
 # ─────────────────────────────────────────────────────────────
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Hex - AI agent with hardware control")
-    parser.add_argument("command", nargs="?", default="chat", choices=["chat", "info"])
+    parser.add_argument("command", nargs="?", default="chat", choices=["chat", "info", "run"])
+    parser.add_argument("prompt", nargs="*", help="Prompt for 'run' command")
     args = parser.parse_args()
     
     system_info = detect_system()
@@ -312,8 +170,15 @@ def main():
         print(json.dumps(system_info, indent=2))
         return
     
-    oauth = get_claude_credentials()
-    chat(oauth, system_info)
+    if not check_claude_cli():
+        print("Error: Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code")
+        sys.exit(1)
+    
+    if args.command == "run" and args.prompt:
+        print(call_claude(" ".join(args.prompt), system_info))
+        return
+    
+    chat(system_info)
 
 
 if __name__ == "__main__":
