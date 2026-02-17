@@ -3,8 +3,9 @@ import { useState } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import * as os from 'os';
+import * as nodePty from 'node-pty';
 function detectSystem() {
     let sudo = false;
     try {
@@ -26,27 +27,27 @@ function detectSystem() {
 // ─────────────────────────────────────────────────────────────
 async function callClaude(prompt) {
     return new Promise((resolve) => {
-        const child = spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
-            stdio: ['pipe', 'pipe', 'pipe'],
+        const ptyProcess = nodePty.spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], {
+            name: 'xterm-256color',
+            cols: 120,
+            rows: 30,
+            cwd: process.cwd(),
+            env: process.env,
         });
         let output = '';
-        child.stdout.on('data', (data) => {
-            output += data.toString();
+        ptyProcess.onData((data) => {
+            output += data;
         });
-        child.stderr.on('data', (data) => {
-            output += data.toString();
-        });
-        child.on('close', () => {
-            // Clean ANSI codes
+        ptyProcess.onExit(() => {
+            // Clean ANSI codes and terminal garbage
             const clean = output
                 .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
                 .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+                .replace(/\x1b[PX^_].*?(?:\x1b\\|\x07)/gs, '')
                 .replace(/\[<u/g, '')
+                .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
                 .trim();
             resolve(clean);
-        });
-        child.on('error', (err) => {
-            resolve(`Error: ${err.message}`);
         });
     });
 }
